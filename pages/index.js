@@ -45,6 +45,7 @@ export default function Home() {
   const [currentSpeakerId, setCurrentSpeakerId] = useState('');
   const [activeTab, setActiveTab] = useState('transcript'); // transcript | insights
   const [micOn, setMicOn] = useState(false);
+  const [micError, setMicError] = useState('');
 
   // Ended
   const [minutes, setMinutes] = useState('');
@@ -176,21 +177,42 @@ export default function Home() {
     }
   }
 
-  function onChunk({ text, isFinal }) {
+  function onChunk({ text, isFinal, speaker, error, info }) {
+    // Error from STT (permission denied, API failure, etc.)
+    if (error) {
+      setMicError(error);
+      setMicOn(false);
+      return;
+    }
+    // Informational message (e.g. "recording started")
+    if (info) {
+      setMicError('');
+      setTranscriptLines(prev => [...prev.filter(l => !l.isInfo), { id: 'info', text: info, speakerName: '', isInterim: false, isInfo: true }]);
+      return;
+    }
+
+    setMicError('');
     const s = store.current;
-    addTranscriptChunk(s, text, isFinal, currentSpeakerId || null);
+    if (isFinal && text.trim()) {
+      addTranscriptChunk(s, text, true, currentSpeakerId || null);
+    }
     const speakerName = currentSpeakerId
       ? (s.participants.find(p => p.id === currentSpeakerId)?.name || '') : '';
 
     if (isFinal) {
+      if (!text.trim()) {
+        // Clear interim only
+        setTranscriptLines(prev => prev.filter(l => !l.isInterim));
+        return;
+      }
       const id = transcriptIdRef.current++;
-      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim), { id, text, speakerName, isInterim: false }]);
+      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id, text, speakerName, isInterim: false, isInfo: false }]);
       if (hasAgendaRef.current) {
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => triggerEval('silence'), SILENCE_MS);
       }
     } else {
-      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim), { id: 'interim', text, speakerName, isInterim: true }]);
+      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id: 'interim', text, speakerName, isInterim: true, isInfo: false }]);
     }
   }
 
@@ -407,6 +429,14 @@ export default function Home() {
             )}
           </div>
 
+          {/* Mic error banner */}
+          {micError && (
+            <div className="mic-error-banner">
+              ⚠️ {micError}
+              <button onClick={() => setMicError('')}>✕</button>
+            </div>
+          )}
+
           {/* Agenda nav (agenda mode only) */}
           {hasAgenda && items.length > 0 && (
             <div className="agenda-nav">
@@ -455,8 +485,8 @@ export default function Home() {
               </div>
               <div className="transcript-body">
                 {transcriptLines.map(line => (
-                  <p key={line.id} className={line.isInterim ? 'interim' : ''}>
-                    {line.speakerName && <span className="speaker-tag">{line.speakerName}: </span>}
+                  <p key={line.id} className={line.isInterim ? 'interim' : line.isInfo ? 'info-line' : ''}>
+                    {!line.isInfo && line.speakerName && <span className="speaker-tag">{line.speakerName}: </span>}
                     {line.text}
                   </p>
                 ))}
@@ -619,6 +649,10 @@ export default function Home() {
         .transcript-body p { margin-bottom: 4px; }
         .speaker-tag { font-weight: 700; color: var(--primary-h); margin-right: 4px; }
         .interim { color: var(--text-muted); }
+        .info-line { color: var(--success); font-size: 13px; font-style: italic; }
+
+        .mic-error-banner { background: var(--danger); color: #fff; padding: 10px 16px; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .mic-error-banner button { background: transparent; color: #fff; padding: 2px 8px; font-size: 16px; min-height: unset; border: 1px solid rgba(255,255,255,.4); border-radius: 4px; }
 
         .insight-section { border-bottom: 1px solid var(--border); padding: 10px 14px; overflow-y: auto; }
         .insight-section.grow { flex: 1; border-bottom: none; }
