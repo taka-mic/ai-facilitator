@@ -61,6 +61,7 @@ export default function Home() {
   const ttlTimerRef = useRef(null);
   const transcriptIdRef = useRef(0);
   const speechLib = useRef(null);
+  const onChunkRef = useRef(null); // always-current callback for STT
   const [sttOk, setSttOk] = useState(true);
 
   useEffect(() => {
@@ -162,8 +163,10 @@ export default function Home() {
 
     setMicError('');
     setMicOn(true);
+    // Pass a stable wrapper so STT always calls the latest onChunk
+    onChunkRef.current = onChunk;
     try {
-      await speechLib.current.startSTT(onChunk);
+      await speechLib.current.startSTT((evt) => onChunkRef.current(evt));
     } catch (e) {
       setMicError(`マイク起動エラー: ${e.message}`);
       setMicOn(false);
@@ -503,6 +506,9 @@ export default function Home() {
                 </select>
               </div>
               <div className="transcript-body">
+                {!micOn && transcriptLines.length === 0 && (
+                  <p className="mic-guide">⬆ 左上の <strong>🎙 OFF</strong> ボタンをタップして録音を開始してください</p>
+                )}
                 {transcriptLines.map(line => (
                   <p key={line.id} className={line.isInterim ? 'interim' : line.isInfo ? 'info-line' : ''}>
                     {!line.isInfo && line.speakerName && <span className="speaker-tag">{line.speakerName}: </span>}
@@ -669,6 +675,7 @@ export default function Home() {
         .speaker-tag { font-weight: 700; color: var(--primary-h); margin-right: 4px; }
         .interim { color: var(--text-muted); }
         .info-line { color: var(--success); font-size: 13px; font-style: italic; }
+        .mic-guide { color: var(--text-muted); font-size: 14px; text-align: center; margin-top: 40px; line-height: 2; }
 
         .mic-error-banner { background: var(--danger); color: #fff; padding: 10px 16px; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
         .mic-error-banner button { background: transparent; color: #fff; padding: 2px 8px; font-size: 16px; min-height: unset; border: 1px solid rgba(255,255,255,.4); border-radius: 4px; }
