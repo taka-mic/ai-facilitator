@@ -140,14 +140,33 @@ export default function Home() {
     extractTimerRef.current = setInterval(runExtraction, EXTRACT_INTERVAL_MS);
   }
 
-  function toggleMic() {
+  async function toggleMic() {
     if (micOn) {
       speechLib.current?.stopSTT();
       setMicOn(false);
       setRunStateBoth('listening');
-    } else {
-      speechLib.current?.startSTT(onChunk);
-      setMicOn(true);
+      return;
+    }
+
+    // Guard: speech lib not yet loaded
+    if (!speechLib.current) {
+      setMicError('音声ライブラリ読み込み中です。1〜2秒後に再度タップしてください。');
+      return;
+    }
+
+    // Guard: browser has no STT support at all
+    if (!speechLib.current.isSTTSupported()) {
+      setMicError('このブラウザは音声認識に非対応です。Chrome または Android Chrome をお試しください。');
+      return;
+    }
+
+    setMicError('');
+    setMicOn(true);
+    try {
+      await speechLib.current.startSTT(onChunk);
+    } catch (e) {
+      setMicError(`マイク起動エラー: ${e.message}`);
+      setMicOn(false);
     }
   }
 
