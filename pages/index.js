@@ -44,6 +44,7 @@ export default function Home() {
   const [handRaisedTTL, setHandRaisedTTL] = useState(HAND_RAISED_TTL_S);
   const [currentSpeakerId, setCurrentSpeakerId] = useState('');
   const [activeTab, setActiveTab] = useState('transcript'); // transcript | insights
+  const [micOn, setMicOn] = useState(false);
 
   // Ended
   const [minutes, setMinutes] = useState('');
@@ -129,13 +130,24 @@ export default function Home() {
   function startRunning() {
     setPhase('running');
     setRunStateBoth('listening');
-    speechLib.current?.startSTT(onChunk);
+    // STT is NOT started here — user must press the mic button explicitly
 
     if (hasAgendaRef.current) {
       agendaTimerRef.current = setInterval(onAgendaTick, 1000);
       evalTimerRef.current   = setInterval(() => triggerEval('periodic'), EVAL_INTERVAL_MS);
     }
     extractTimerRef.current = setInterval(runExtraction, EXTRACT_INTERVAL_MS);
+  }
+
+  function toggleMic() {
+    if (micOn) {
+      speechLib.current?.stopSTT();
+      setMicOn(false);
+      setRunStateBoth('listening');
+    } else {
+      speechLib.current?.startSTT(onChunk);
+      setMicOn(true);
+    }
   }
 
   function stopRunning() {
@@ -146,6 +158,7 @@ export default function Home() {
     clearInterval(ttlTimerRef.current);
     speechLib.current?.stopSTT();
     speechLib.current?.cancelSpeak();
+    setMicOn(false);
   }
 
   function onAgendaTick() {
@@ -380,14 +393,17 @@ export default function Home() {
         <div className="screen-running">
           {/* Header */}
           <div className="running-header">
-            <div className={`mic-dot ${runState}`} title={runState} />
+            <button className={`mic-btn ${micOn ? runState : 'off'}`} onClick={toggleMic}
+              title={micOn ? 'マイクOFF' : 'マイクON'}>
+              {micOn ? '🎙' : '🎙'}<span className="mic-label">{micOn ? 'ON' : 'OFF'}</span>
+            </button>
             {hasAgenda ? (
               <>
                 <div className="item-title">{items[currentItemIdx]?.title ?? '—'}</div>
                 <div className={`timer ${timerOvertime ? 'overtime' : ''}`}>{timerDisplay}</div>
               </>
             ) : (
-              <div className="item-title">録音中</div>
+              <div className="item-title">{micOn ? '録音中' : 'マイクをONにしてください'}</div>
             )}
           </div>
 
@@ -564,12 +580,15 @@ export default function Home() {
         .screen-running { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; position: relative; }
 
         .running-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-        .mic-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
-        .mic-dot.listening  { background: var(--success); animation: pulse 1.5s infinite; }
-        .mic-dot.evaluating { background: var(--warning); }
-        .mic-dot.hand_raised { background: var(--orange); animation: pulse .5s infinite; }
-        .mic-dot.speaking   { background: var(--primary); }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .mic-btn { display: flex; align-items: center; gap: 5px; border-radius: 20px; padding: 8px 14px; font-size: 15px; font-weight: 700; flex-shrink: 0; min-height: var(--tap); transition: background .2s, color .2s; }
+        .mic-btn.off       { background: var(--surface2); color: var(--text-muted); }
+        .mic-btn.off:hover { background: var(--success); color: #fff; }
+        .mic-btn.listening  { background: var(--success); color: #fff; animation: pulse 1.5s infinite; }
+        .mic-btn.evaluating { background: var(--warning); color: #fff; }
+        .mic-btn.hand_raised { background: var(--orange); color: #fff; animation: pulse .5s infinite; }
+        .mic-btn.speaking   { background: var(--primary); color: #fff; }
+        .mic-label { font-size: 12px; letter-spacing: .05em; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
         .item-title { font-size: 15px; font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .timer { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--success); flex-shrink: 0; }
         .timer.overtime { color: var(--danger); }
