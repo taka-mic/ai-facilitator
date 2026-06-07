@@ -64,10 +64,13 @@ export default function Home() {
   const onChunkRef = useRef(null); // always-current callback for STT
   const [sttOk, setSttOk] = useState(true);
 
+  const [isIOSChr, setIsIOSChr] = useState(false);
+
   useEffect(() => {
     import('../lib/speech').then(mod => {
       speechLib.current = mod;
       setSttOk(mod.isSTTSupported());
+      setIsIOSChr(mod.isIOSChrome());
     });
   }, []);
 
@@ -152,6 +155,12 @@ export default function Home() {
     // Guard: speech lib not yet loaded
     if (!speechLib.current) {
       setMicError('音声ライブラリ読み込み中です。1〜2秒後に再度タップしてください。');
+      return;
+    }
+
+    // Guard: iOS Chrome — getUserMedia and webkitSpeechRecognition both fail
+    if (speechLib.current.isIOSChrome()) {
+      setMicError('iPhone の Chrome ではマイクが使えません。Safari で開き直してください。');
       return;
     }
 
@@ -450,6 +459,13 @@ export default function Home() {
               <div className="item-title">{micOn ? '録音中' : 'マイクをONにしてください'}</div>
             )}
           </div>
+
+          {/* iOS Chrome warning — must switch to Safari */}
+          {isIOSChr && (
+            <div className="mic-error-banner" style={{background:'#e67e00'}}>
+              📱 iPhone の Chrome ではマイクが使えません。<strong>Safari で開き直してください</strong>（Safari 15以降対応）。
+            </div>
+          )}
 
           {/* Mic error banner */}
           {micError && (
