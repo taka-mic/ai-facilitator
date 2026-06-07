@@ -46,6 +46,9 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('transcript'); // transcript | insights
   const [micOn, setMicOn] = useState(false);
   const [micError, setMicError] = useState('');
+  const [useDeepgram, setUseDeepgram] = useState(false);
+  // speaker_label -> participant name mapping (Deepgram diarization)
+  const speakerMapRef = useRef({}); // e.g. { speaker_0: 'p1', speaker_1: 'p2' }
 
   // Ended
   const [minutes, setMinutes] = useState('');
@@ -175,7 +178,7 @@ export default function Home() {
     // Pass a stable wrapper so STT always calls the latest onChunk
     onChunkRef.current = onChunk;
     try {
-      await speechLib.current.startSTT((evt) => onChunkRef.current(evt));
+      await speechLib.current.startSTT((evt) => onChunkRef.current(evt), { useDeepgram });
     } catch (e) {
       setMicError(`マイク起動エラー: ${e.message}`);
       setMicOn(false);
@@ -224,26 +227,57 @@ export default function Home() {
 
     setMicError('');
     const s = store.current;
-    if (isFinal && text.trim()) {
-      addTranscriptChunk(s, text, true, currentSpeakerId || null);
+
+    // Resolve effective speaker ID:
+    // - Deepgram mode: use diarization label mapped to participant
+    // - Manual mode: use currentSpeakerId selected by chairperson
+    let effectiveSpeakerId = currentSpeakerId || null;
+    let effectiveSpeakerName = '';
+
+    if (speaker && speaker.startsWith('speaker_')) {
+      // Try to auto-map by name mention in speech (simple heuristic)
+      if (isFinal && text.trim()) {
+        const nameMatch = text.match(/(?:私は|わたしは|僕は|ぼくは|俺は|おれは)([^\s、。]+)/);
+        if (nameMatch) {
+          const mentionedName = nameMatch[1].trim();
+          const matched = s.participants.find(p =>
+            p.name && mentionedName.includes(p.name.split(/\s/)[0])
+          );
+          if (matched && !speakerMapRef.current[speaker]) {
+            speakerMapRef.current = { ...speakerMapRef.current, [speaker]: matched.id };
+          }
+        }
+      }
+      const mappedId = speakerMapRef.current[speaker];
+      if (mappedId) {
+        effectiveSpeakerId = mappedId;
+        effectiveSpeakerName = s.participants.find(p => p.id === mappedId)?.name || '';
+      } else {
+        // Show raw label (e.g. "話者A") until mapped
+        effectiveSpeakerName = `話者${speaker.replace('speaker_', String.fromCharCode(65 + parseInt(speaker.replace('speaker_', '') || 0)))}`;
+      }
+    } else {
+      effectiveSpeakerName = effectiveSpeakerId
+        ? (s.participants.find(p => p.id === effectiveSpeakerId)?.name || '') : '';
     }
-    const speakerName = currentSpeakerId
-      ? (s.participants.find(p => p.id === currentSpeakerId)?.name || '') : '';
+
+    if (isFinal && text.trim()) {
+      addTranscriptChunk(s, text, true, effectiveSpeakerId || null);
+    }
 
     if (isFinal) {
       if (!text.trim()) {
-        // Clear interim only
         setTranscriptLines(prev => prev.filter(l => !l.isInterim));
         return;
       }
       const id = transcriptIdRef.current++;
-      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id, text, speakerName, isInterim: false, isInfo: false }]);
+      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id, text, speakerName: effectiveSpeakerName, isInterim: false, isInfo: false }]);
       if (hasAgendaRef.current) {
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => triggerEval('silence'), SILENCE_MS);
       }
     } else {
-      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id: 'interim', text, speakerName, isInterim: true, isInfo: false }]);
+      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id: 'interim', text, speakerName: effectiveSpeakerName, isInterim: true, isInfo: false }]);
     }
   }
 
@@ -432,6 +466,22 @@ export default function Home() {
               <button className="btn-ghost" onClick={addParticipant}>＋ 参加者を追加</button>
             </div>
 
+            <div className="field">
+              <label>話者認識モード</label>
+              <div className="stt-mode-row">
+                <label className={`stt-mode-opt ${!useDeepgram ? 'selected' : ''}`}>
+                  <input type="radio" name="sttMode" checked={!useDeepgram} onChange={() => setUseDeepgram(false)} />
+                  <span>🌐 標準（Web Speech API）</span>
+                  <small>手動で話者を選択</small>
+                </label>
+                <label className={`stt-mode-opt ${useDeepgram ? 'selected' : ''}`}>
+                  <input type="radio" name="sttMode" checked={useDeepgram} onChange={() => setUseDeepgram(true)} />
+                  <span>🎯 Deepgram（自動話者分離）</span>
+                  <small>DEEPGRAM_API_KEY が必要・より高精度</small>
+                </label>
+              </div>
+            </div>
+
             {setupError && <p className="error">{setupError}</p>}
 
             <button className="btn-primary" onClick={handleStart} disabled={setupLoading}>
@@ -512,14 +562,20 @@ export default function Home() {
             {/* Transcript panel */}
             <div className={`transcript-panel ${activeTab === 'transcript' ? 'tab-active' : 'tab-hidden'}`}>
               <div className="panel-header">
-                <span className="speaker-label">話者:</span>
-                <select className="speaker-select" value={currentSpeakerId}
-                  onChange={e => setCurrentSpeakerId(e.target.value)}>
-                  <option value="">（未選択）</option>
-                  {store.current.participants.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+                {useDeepgram ? (
+                  <span className="speaker-label">🎯 Deepgram 話者自動認識中</span>
+                ) : (
+                  <>
+                    <span className="speaker-label">話者:</span>
+                    <select className="speaker-select" value={currentSpeakerId}
+                      onChange={e => setCurrentSpeakerId(e.target.value)}>
+                      <option value="">（未選択）</option>
+                      {store.current.participants.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
               </div>
               <div className="transcript-body">
                 {!micOn && transcriptLines.length === 0 && (
@@ -532,6 +588,42 @@ export default function Home() {
                   </p>
                 ))}
               </div>
+
+              {/* Deepgram: speaker mapping UI */}
+              {useDeepgram && Object.keys(speakerMapRef.current).length === 0 && store.current.participants.length > 0 && (
+                <div className="speaker-map-hint">
+                  💡 話者ラベル（話者A/B…）が表示されたら、参加者名をクリックして紐付けできます
+                </div>
+              )}
+              {useDeepgram && (() => {
+                const unmapped = [...new Set(
+                  transcriptLines.filter(l => l.speakerName?.startsWith('話者')).map(l => l.speakerName)
+                )];
+                if (unmapped.length === 0 || store.current.participants.length === 0) return null;
+                return (
+                  <div className="speaker-map-panel">
+                    {unmapped.map(label => {
+                      const rawKey = `speaker_${label.charCodeAt(label.length - 1) - 65}`;
+                      return (
+                        <div key={label} className="speaker-map-row">
+                          <span className="speaker-tag">{label}</span>
+                          <span> → </span>
+                          <select defaultValue="" onChange={e => {
+                            if (e.target.value) {
+                              speakerMapRef.current = { ...speakerMapRef.current, [rawKey]: e.target.value };
+                            }
+                          }}>
+                            <option value="">名前を選択</option>
+                            {store.current.participants.map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Insights panel */}
@@ -692,6 +784,14 @@ export default function Home() {
         .interim { color: var(--text-muted); }
         .info-line { color: var(--success); font-size: 13px; font-style: italic; }
         .mic-guide { color: var(--text-muted); font-size: 14px; text-align: center; margin-top: 40px; line-height: 2; }
+        .speaker-map-hint { padding: 8px 16px; font-size: 12px; color: var(--text-muted); background: var(--surface-2); }
+        .speaker-map-panel { padding: 8px 16px; background: var(--surface-2); border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px; }
+        .speaker-map-row { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+        .stt-mode-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+        .stt-mode-opt { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; flex: 1; min-width: 140px; font-size: 13px; }
+        .stt-mode-opt.selected { border-color: var(--primary-h); background: rgba(99,102,241,.08); }
+        .stt-mode-opt input { display: none; }
+        .stt-mode-opt small { color: var(--text-muted); font-size: 11px; }
 
         .mic-error-banner { background: var(--danger); color: #fff; padding: 10px 16px; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
         .mic-error-banner button { background: transparent; color: #fff; padding: 2px 8px; font-size: 16px; min-height: unset; border: 1px solid rgba(255,255,255,.4); border-radius: 4px; }
