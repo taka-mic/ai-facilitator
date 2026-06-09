@@ -48,6 +48,8 @@ export default function Home() {
   const [micOn, setMicOn] = useState(false);
   const [micError, setMicError] = useState('');
   const [useDeepgram, setUseDeepgram] = useState(false);
+  const [jaVoices, setJaVoices] = useState([]);
+  const [selectedVoiceName, setSelectedVoiceName] = useState('');
   // speaker_label -> participant name mapping (Deepgram diarization)
   const speakerMapRef = useRef({}); // e.g. { speaker_0: 'p1', speaker_1: 'p2' }
 
@@ -71,10 +73,12 @@ export default function Home() {
   const [isIOSChr, setIsIOSChr] = useState(false);
 
   useEffect(() => {
-    import('../lib/speech').then(mod => {
+    import('../lib/speech').then(async mod => {
       speechLib.current = mod;
       setSttOk(mod.isSTTSupported());
       setIsIOSChr(mod.isIOSChrome());
+      const voices = await mod.getJapaneseVoices();
+      setJaVoices(voices);
     });
   }, []);
 
@@ -485,6 +489,21 @@ export default function Home() {
                 </label>
               </div>
             </div>
+
+            {jaVoices.length > 0 && (
+              <div className="field">
+                <label>ファシリテーターの音声</label>
+                <select value={selectedVoiceName} onChange={e => {
+                  setSelectedVoiceName(e.target.value);
+                  speechLib.current?.setPreferredVoice(e.target.value);
+                }}>
+                  <option value="">自動選択（Google 音声優先）</option>
+                  {jaVoices.map(v => (
+                    <option key={v.name} value={v.name}>{v.name}（{v.localService ? 'ローカル' : 'ネットワーク'}）</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {setupError && <p className="error">{setupError}</p>}
 
