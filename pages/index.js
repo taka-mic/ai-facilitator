@@ -29,7 +29,8 @@ export default function Home() {
   // Setup
   const [setupError, setSetupError] = useState('');
   const [setupLoading, setSetupLoading] = useState(false);
-  const [agendaText, setAgendaText] = useState('');
+  const DEFAULT_AGENDA = `【目的】旅行先の決定\n\n【アジェンダ】\n1. 候補列挙（1分）\n2. 旅行先選定（1分）`;
+  const [agendaText, setAgendaText] = useState(DEFAULT_AGENDA);
   const [participants, setParticipants] = useState([]);
   const pidCounter = useRef(1);
 
@@ -443,11 +444,14 @@ export default function Home() {
             <h1>🤝 <span className="accent">AI</span> ファシリテーター</h1>
 
             <div className="field">
-              <label>会議の目的・アジェンダ <span className="optional">（任意）</span></label>
+              <div className="field-header">
+                <label>会議の目的・アジェンダ <span className="optional">（任意）</span></label>
+                <button className="btn-ghost btn-small" onClick={() => setAgendaText('')}>クリア</button>
+              </div>
               <textarea
                 value={agendaText}
                 onChange={e => setAgendaText(e.target.value)}
-                placeholder={`入力なしでも開始できます（議事録のみ生成）\n\n【目的】来期予算案の審議・承認\n\n【アジェンダ】\n1. 開会・前回議事録確認（5分）\n2. 今期実績の報告（15分）\n3. 来期予算案の説明（20分）\n4. 質疑・承認（15分）\n5. その他・閉会（5分）`}
+                placeholder={`入力なしでも開始できます（議事録のみ生成）`}
               />
               {!agendaText.trim() && (
                 <p className="hint">💡 未入力の場合、AI の進行補助なしで録音・議事録生成のみ行います</p>
@@ -736,6 +740,9 @@ export default function Home() {
         .card h1 { font-size: 22px; }
         .card h2 { font-size: 18px; }
         .field label { display: block; margin-bottom: 6px; color: var(--text-muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+        .field-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+        .field-header label { margin-bottom: 0; }
+        .btn-small { font-size: 12px; padding: 3px 10px; min-height: unset; }
         .field textarea { height: 160px; resize: vertical; }
         .participant-row { display: flex; gap: 8px; margin-bottom: 6px; }
 
