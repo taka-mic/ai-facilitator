@@ -26,6 +26,21 @@ const HAND_RAISED_TTL_S = 90;
 export default function Home() {
   const [phase, setPhase] = useState('setup');
 
+  // Session sync
+  const [sessionId] = useState(() => Math.random().toString(36).slice(2, 6).toUpperCase());
+  const pusherEnabled = typeof process !== 'undefined' && !!process.env.NEXT_PUBLIC_PUSHER_KEY;
+
+  async function syncPush(event, data) {
+    if (!pusherEnabled) return;
+    try {
+      await fetch('/api/pusher/trigger', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, event, data }),
+      });
+    } catch (_) {}
+  }
+
   // Setup
   const [setupError, setSetupError] = useState('');
   const [setupLoading, setSetupLoading] = useState(false);
@@ -210,6 +225,10 @@ export default function Home() {
     const remaining = allotted - item.elapsed_seconds;
     setTimerDisplay(fmt(remaining));
     setTimerOvertime(remaining < 0);
+    // Sync agenda state every 5 seconds to avoid too many pushes
+    if (item.elapsed_seconds % 5 === 0) {
+      syncPush('agenda', { item, timerDisplay: fmt(remaining), overtime: remaining < 0 });
+    }
     if (item.elapsed_seconds === allotted ||
       (item.elapsed_seconds > allotted && item.elapsed_seconds % 30 === 0)) {
       triggerEval('timer');
@@ -276,13 +295,21 @@ export default function Home() {
         return;
       }
       const id = transcriptIdRef.current++;
-      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id, text, speakerName: effectiveSpeakerName, isInterim: false, isInfo: false }]);
+      setTranscriptLines(prev => {
+        const next = [...prev.filter(l => !l.isInterim && !l.isInfo), { id, text, speakerName: effectiveSpeakerName, isInterim: false, isInfo: false }];
+        syncPush('transcript', { lines: next });
+        return next;
+      });
       if (hasAgendaRef.current) {
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = setTimeout(() => triggerEval('silence'), SILENCE_MS);
       }
     } else {
-      setTranscriptLines(prev => [...prev.filter(l => !l.isInterim && !l.isInfo), { id: 'interim', text, speakerName: effectiveSpeakerName, isInterim: true, isInfo: false }]);
+      setTranscriptLines(prev => {
+        const next = [...prev.filter(l => !l.isInterim && !l.isInfo), { id: 'interim', text, speakerName: effectiveSpeakerName, isInterim: true, isInfo: false }];
+        syncPush('transcript', { lines: next });
+        return next;
+      });
     }
   }
 
@@ -309,10 +336,13 @@ export default function Home() {
         s.pendingIntervention = { ...result, at: Date.now() };
         setHandRaisedMsg(result.spoken_message);
         setRunStateBoth('hand_raised');
+        syncPush('hand-raised', { message: result.spoken_message });
+        syncPush('state', { runState: 'hand_raised' });
         speechLib.current?.playChime();
         startTTL();
       } else {
         setRunStateBoth('listening');
+        syncPush('state', { runState: 'listening' });
       }
     } catch (e) {
       console.warn('Eval error:', e);
@@ -337,6 +367,8 @@ export default function Home() {
     const s = store.current;
     if (s.pendingIntervention) { addInterventionRecord(s, { ...s.pendingIntervention, outcome: 'expired' }); s.pendingIntervention = null; }
     setRunStateBoth('listening');
+    syncPush('hand-lowered', {});
+    syncPush('state', { runState: 'listening' });
   }
 
   function handleAllow() {
@@ -345,9 +377,12 @@ export default function Home() {
     const s = store.current;
     const msg = s.pendingIntervention?.spoken_message || '';
     setRunStateBoth('speaking');
+    syncPush('hand-lowered', {});
+    syncPush('state', { runState: 'speaking' });
     speechLib.current?.speak(msg, () => {
       if (s.pendingIntervention) { addInterventionRecord(s, { ...s.pendingIntervention, outcome: 'spoken' }); s.pendingIntervention = null; }
       setRunStateBoth('listening');
+      syncPush('state', { runState: 'listening' });
     });
   }
 
@@ -357,6 +392,8 @@ export default function Home() {
     const s = store.current;
     if (s.pendingIntervention) { addInterventionRecord(s, { ...s.pendingIntervention, outcome: 'dismissed' }); s.pendingIntervention = null; }
     setRunStateBoth('listening');
+    syncPush('hand-lowered', {});
+    syncPush('state', { runState: 'listening' });
   }
 
   // ── Extraction ─────────────────────────────────────────────────────────────
@@ -369,6 +406,7 @@ export default function Home() {
       });
       mergeInsights(s, result);
       setInsights({ ...s.insights });
+      syncPush('insights', s.insights);
     } catch (e) { console.warn('Extract error:', e); }
   }
 
@@ -406,7 +444,9 @@ export default function Home() {
           insights: s.insights,
         },
       });
-      setMinutes(typeof result === 'string' ? result : result.text || JSON.stringify(result));
+      const finalMinutes = typeof result === 'string' ? result : result.text || JSON.stringify(result);
+      setMinutes(finalMinutes);
+      syncPush('ended', { minutes: finalMinutes });
     } catch (e) {
       setMinutes(`議事録の生成に失敗しました: ${e.message}`);
     }
@@ -530,6 +570,11 @@ export default function Home() {
               </>
             ) : (
               <div className="item-title">{micOn ? '録音中' : 'マイクをONにしてください'}</div>
+            )}
+            {pusherEnabled && (
+              <div className="session-id-badge" title={`ビューワー: ${typeof window !== 'undefined' ? window.location.origin : ''}/viewer`}>
+                🖥️ <strong>{sessionId}</strong>
+              </div>
             )}
           </div>
 
@@ -768,7 +813,8 @@ export default function Home() {
         /* Running */
         .screen-running { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; position: relative; }
 
-        .running-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+        .running-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; flex-wrap: wrap; }
+        .session-id-badge { margin-left: auto; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
         .mic-btn { display: flex; align-items: center; gap: 5px; border-radius: 20px; padding: 8px 14px; font-size: 15px; font-weight: 700; flex-shrink: 0; min-height: var(--tap); transition: background .2s, color .2s; }
         .mic-btn.off       { background: var(--surface2); color: var(--text-muted); }
         .mic-btn.off:hover { background: var(--success); color: #fff; }
